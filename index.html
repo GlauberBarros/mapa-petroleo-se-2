@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Mapa Petróleo - Sergipe</title>
+
+  <!-- OpenLayers -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@latest/ol.css" />
+
+  <style>
+    html, body { height: 100%; width: 100%; margin: 0; padding: 0; }
+    #map { height: 100vh; width: 100vw; background: #f2f2f2; }
+
+    .panel {
+      position: absolute; top: 12px; left: 12px; z-index: 999;
+      background: white; padding: 10px 12px; border-radius: 10px;
+      box-shadow: 0 2px 10px rgba(0,0,0,.15);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      font-size: 14px;
+      min-width: 260px;
+    }
+    .panel label { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
+    .panel .muted { opacity: .75; font-size: 12px; margin-top: 6px; }
+    .panel button { margin-top: 10px; width: 100%; cursor: pointer; }
+
+    .popup {
+      background: white;
+      padding: 10px 12px;
+      border-radius: 10px;
+      box-shadow: 0 2px 10px rgba(0,0,0,.18);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      font-size: 13px;
+      max-width: 340px;
+    }
+    .popup .title { font-weight: 700; margin-bottom: 6px; }
+    .popup .row { margin: 2px 0; }
+    .popup .key { font-weight: 600; }
+  </style>
+</head>
+
+<body>
+  <div id="map"></div>
+
+  <div class="panel">
+    <div><b>Mapa Petróleo - SE</b></div>
+    <div>Status: <span id="status">Carregando…</span></div>
+
+    <label><input type="checkbox" id="chkAreas" checked> Áreas (CAMPOS-CARMO_ENERGY)</label>
+    <label><input type="checkbox" id="chkPontos" checked> Pontos (Status - 25.11.2025)</label>
+
+    <button id="btnRefit">Ajustar zoom</button>
+
+    <div class="muted">
+      Dica: se as camadas não aparecerem, abra F12 → Console e veja os logs.
+    </div>
+  </div>
+
+  <div id="popup" class="popup" style="display:none;"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/ol@latest/dist/ol.js"></script>
+  <script>
+    const statusEl = document.getElementById("status");
+    function setStatus(msg) {
+      statusEl.textContent = msg;
+      console.log("[STATUS]", msg);
+    }
+
+    if (!window.ol) {
+      setStatus("ERRO: OpenLayers não carregou (internet/bloqueio de CDN).");
+      throw new Error("OpenLayers não carregou");
+    }
+
+    // URLs robustas para GitHub Pages (funciona mesmo dentro de /repo/)
+    const areasUrl  = new URL("areas.geojson",  window.location.href).toString();
+    const pontosUrl = new URL("pontos.geojson", window.location.href).toString();
+
+    console.log("areasUrl =", areasUrl);
+    console.log("pontosUrl =", pontosUrl);
+
+    // Camada base
+    const osm = new ol.layer.Tile({ source: new ol.source.OSM() });
+
+    // Fontes vetoriais
+    // - dataProjection: como o GeoJSON vem (normalmente EPSG:4326, lon/lat)
+    // - featureProjection: como o mapa trabalha (EPSG:3857)
+    const geojsonFormat = new ol.format.GeoJSON({
+      dataProjection: "EPSG:4326",
+      featureProjection: "EPSG:3857"
+    });
+
+    const areasSource = new ol.source.Vector({
+      url: areasUrl,
+      format: geojsonFormat
+    });
+
+    const pontosSource = new ol.source.Vector({
+      url: pontosUrl,
+      format: geojsonFormat
+    });
+
+    // Estilos
+    const areasLayer = new ol.layer.Vector({
+      source: areasSource,
+      style: new ol.style.Style({
+        stroke: new ol.style.Stroke({ width: 2 }),
+        fill: new ol.style.Fill({ color: "rgba(0,0,0,0.12)" })
+      })
+    });
+
+    const pontosLayer = new ol.layer.Vector({
+      source: pontosSource,
+      style: new ol.style.Style({
+        image: new ol.style.Circle({
+          radius: 6,
+          stroke: new ol.style.Stroke({ width: 2 }),
+          fill: new ol.style.Fill({ color: "rgba(255,0,0,0.55)" })
+        })
+      })
+    });
+
+    // Mapa
+    const map = new ol.Map({
+      target: "map",
+      layers: [osm, areasLayer, pontosLayer],
+      view: new ol.View({
+        center: ol.proj.fromLonLat([-37.3, -10.7]),
+        zoom: 8
+      })
+    });
+
+    // Fit para extent combinado (áreas + pontos)
+    function fitAll() {
+      const extents = [];
+      if (areasSource.getFeatures().length) extents.push(areasSource.getExtent());
+      if (pontosSource.getFeatures().length) extents.push(pontosSource.getExtent());
+
+      if (!extents.length) {
+        setStatus("Sem feições para ajustar zoom.");
+        return;
+      }
+
+      let e = extents[0].slice();
+      for (let i = 1; i < extents.length; i++) e = ol.extent.extend(e, extents[i]);
+
+      map.getView().fit(e, { padding: [50,50,50,50], maxZoom: 14 });
+      setStatus("Zoom ajustado.");
+    }
+
+    document.getElementById("btnRefit").addEventListener("click", fitAll);
+
+    // Toggle camadas
+    document.getElementById("chkAreas").addEventListener("change", (e) => {
+      areasLayer.setVisible(e.target.checked);
+    });
+    document.getElementById("chkPontos").addEventListener("change", (e) => {
+      pontosLayer.setVisible(e.target.checked);
+    });
+
+    // Logs de carregamento (debug)
+    let loaded = 0;
+    function onLoaded() {
+      loaded += 1;
+      if (loaded >= 2) {
+        setStatus("Camadas carregadas.");
+        fitAll();
+      }
+    }
+
+    areasSource.on("featuresloadend", () => {
+      console.log("Áreas carregadas:", areasSource.getFeatures().length);
+      onLoaded();
+    });
+    areasSource.on("featuresloaderror", () => {
+      console.error("Erro carregando áreas:", areasUrl);
+      setStatus("ERRO ao carregar áreas (veja Console/Network).");
+    });
+
+    pontosSource.on("featuresloadend", () => {
+      console.log("Pontos carregados:", pontosSource.getFeatures().length);
+      onLoaded();
+    });
+    pontosSource.on("featuresloaderror", () => {
+      console.error("Erro carregando pontos:", pontosUrl);
+      setStatus("ERRO ao carregar pontos (veja Console/Network).");
+    });
+
+    // Popup
+    const popupEl = document.getElementById("popup");
+    const overlay = new ol.Overlay({
+      element: popupEl,
+      positioning: "bottom-center",
+      stopEvent: false,
+      offset: [0, -12]
+    });
+    map.addOverlay(overlay);
+
+    function formatProps(props) {
+      const entries = Object.entries(props)
+        .filter(([k]) => k !== "geometry")
+        .slice(0, 14) // limite para não ficar gigante
+        .map(([k, v]) => `<div class="row"><span class="key">${k}:</span> ${String(v)}</div>`)
+        .join("");
+
+      return entries || "<div class='row'>Sem atributos.</div>";
+    }
+
+    map.on("singleclick", (evt) => {
+      popupEl.style.display = "none";
+      overlay.setPosition(undefined);
+
+      const feature = map.forEachFeatureAtPixel(evt.pixel, (f) => f);
+      if (!feature) return;
+
+      const props = feature.getProperties();
+      popupEl.innerHTML = `<div class="title">Detalhes</div>${formatProps(props)}`;
+      popupEl.style.display = "block";
+      overlay.setPosition(evt.coordinate);
+    });
+
+    setStatus("Carregando camadas…");
+  </script>
+</body>
+</html>
