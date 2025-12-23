@@ -200,11 +200,11 @@
 
       let cor = "rgba(120,120,120,0.85)"; // padrão
 
-      if (status.includes("encerrada")) {
+      if (status.includes("Medição encerrada")) || status.includes("encerrada")) {
         cor = "rgba(0,150,0,0.85)"; // verde
-      } else if (status.includes("não iniciada") || status.includes("nao iniciada")) {
+      } else if (status.includes("Medição não iniciada") || status.includes("nao iniciada")) {
         cor = "rgba(255,140,0,0.90)"; // laranja
-      } else if (status.includes("noturna")) {
+      } else if (status.includes("Falta medição noturna")) {
         cor = "rgba(0,90,200,0.90)"; // azul
       }
 
@@ -389,3 +389,4 @@
   </script>
 </body>
 </html>
+
