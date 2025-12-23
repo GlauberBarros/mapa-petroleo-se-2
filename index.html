@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Mapa Petróleo - Sergipe</title>
 
+  <!-- OpenLayers -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@latest/ol.css" />
 
   <style>
@@ -18,7 +19,7 @@
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
       font-size: 14px;
       min-width: 310px;
-      max-width: 360px;
+      max-width: 380px;
     }
     .panel label { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
     .panel .muted { opacity: .75; font-size: 12px; margin-top: 6px; }
@@ -193,18 +194,25 @@
       })
     });
 
-    // Estilo dinâmico dos pontos por STATUS DA MEDIÇÃO
+    // ------------------------------------------------------------
+    // Estilo dinâmico dos pontos por STATUS DA MEDIÇÃO (ajustado)
+    // Regras:
+    // - "Medição encerrada"  -> verde
+    // - "Medição não iniciada" -> laranja
+    // - "Falta medição noturna" -> azul (somente quando o texto contiver essa frase)
+    // - Outros / vazio -> cinza
+    // ------------------------------------------------------------
     function estiloPontos(feature) {
       const raw = feature.get("STATUS DA MEDIÇÃO") ?? feature.get("STATUS") ?? "";
-      const status = String(raw).toLowerCase();
+      const status = String(raw).toLowerCase().trim();
 
-      let cor = "rgba(120,120,120,0.85)"; // padrão
+      let cor = "rgba(120,120,120,0.85)"; // padrão (cinza)
 
-      if (status.includes("Medição encerrada")) || status.includes("encerrada")) {
+      if (status.includes("medição encerrada") || status.includes("encerrada")) {
         cor = "rgba(0,150,0,0.85)"; // verde
-      } else if (status.includes("Medição não iniciada") || status.includes("nao iniciada")) {
+      } else if (status.includes("medição não iniciada") || status.includes("nao iniciada")) {
         cor = "rgba(255,140,0,0.90)"; // laranja
-      } else if (status.includes("Falta medição noturna")) {
+      } else if (status.includes("falta medição noturna")) {
         cor = "rgba(0,90,200,0.90)"; // azul
       }
 
@@ -263,65 +271,60 @@
     });
 
     // ------------------------------------------------------------
-    // Tabela de quantitativos por STATUS DA MEDIÇÃO
+    // Tabela de quantitativos por STATUS DA MEDIÇÃO (normalizada)
     // ------------------------------------------------------------
+    function normalizeStatus(raw) {
+      const s = String(raw ?? "").trim().toLowerCase();
+
+      if (!s) return "Não informado";
+      if (s.includes("medição encerrada") || s.includes("encerrada")) return "Medição encerrada";
+      if (s.includes("medição não iniciada") || s.includes("nao iniciada")) return "Medição não iniciada";
+      if (s.includes("falta medição noturna")) return "Falta medição noturna";
+
+      return "Não informado";
+    }
+
     function atualizarTabelaStatus() {
-      const contagem = {};
+      const contagem = {
+        "Medição encerrada": 0,
+        "Medição não iniciada": 0,
+        "Falta medição noturna": 0,
+        "Não informado": 0
+      };
+
       pontosSource.getFeatures().forEach(f => {
-        const s = f.get("STATUS DA MEDIÇÃO") ?? f.get("STATUS") ?? "Não informado";
-        const status = String(s).trim() || "Não informado";
+        const raw = f.get("STATUS DA MEDIÇÃO") ?? f.get("STATUS") ?? "";
+        const status = normalizeStatus(raw);
         contagem[status] = (contagem[status] || 0) + 1;
-      });
-
-      // Ordem amigável (as 3 categorias principais no topo)
-      const ordem = [
-        "Medição encerrada",
-        "Medição não iniciada",
-        "Falta medição noturna em azul",
-        "Falta medição noturna"
-      ];
-
-      const entries = Object.entries(contagem);
-
-      // Ordena: primeiro as “ordem”, depois o resto por nome
-      entries.sort((a, b) => {
-        const ia = ordem.indexOf(a[0]);
-        const ib = ordem.indexOf(b[0]);
-        if (ia !== -1 || ib !== -1) {
-          if (ia === -1) return 1;
-          if (ib === -1) return -1;
-          return ia - ib;
-        }
-        return a[0].localeCompare(b[0]);
       });
 
       const tabela = document.getElementById("tabelaStatus");
       tabela.innerHTML = "";
 
-      // Total
-      const total = entries.reduce((sum, [,v]) => sum + v, 0);
+      const ordem = [
+        "Medição encerrada",
+        "Medição não iniciada",
+        "Falta medição noturna",
+        "Não informado"
+      ];
 
-      // Linhas
-      for (const [status, qtd] of entries) {
+      let total = 0;
+      for (const k of ordem) total += contagem[k] || 0;
+
+      for (const k of ordem) {
+        const qtd = contagem[k] || 0;
         const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td>${status}</td>
-          <td><b>${qtd}</b></td>
-        `;
+        tr.innerHTML = `<td>${k}</td><td><b>${qtd}</b></td>`;
         tabela.appendChild(tr);
       }
 
-      // Rodapé total
       const trTotal = document.createElement("tr");
-      trTotal.innerHTML = `
-        <td><b>Total</b></td>
-        <td><b>${total}</b></td>
-      `;
+      trTotal.innerHTML = `<td><b>Total</b></td><td><b>${total}</b></td>`;
       tabela.appendChild(trTotal);
     }
 
     // ------------------------------------------------------------
-    // Popup (mantém o comportamento de mostrar atributos)
+    // Popup (mantém comportamento de mostrar atributos)
     // ------------------------------------------------------------
     const popupEl = document.getElementById("popup");
     const overlay = new ol.Overlay({
@@ -389,4 +392,3 @@
   </script>
 </body>
 </html>
-
