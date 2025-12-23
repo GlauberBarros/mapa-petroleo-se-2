@@ -159,11 +159,9 @@
     }
 
     // ------------------------------------------------------------
-    // Cache-busting simples:
-    // - se você atualizar os geojson no GitHub e alguém continuar vendo versão antiga,
-    //   incremente este número (1 -> 2 -> 3 ...)
+    // Cache-busting simples
     // ------------------------------------------------------------
-    const DATA_VERSION = 1;
+    const DATA_VERSION = 2;
 
     // URLs robustas para GitHub Pages
     const areasUrl  = new URL(`areas.geojson?v=${DATA_VERSION}`,  window.location.href).toString();
@@ -182,7 +180,7 @@
     });
 
     // Sources
-    const areasSource = new ol.source.Vector({ url: areasUrl, format: geojsonFormat });
+    const areasSource  = new ol.source.Vector({ url: areasUrl,  format: geojsonFormat });
     const pontosSource = new ol.source.Vector({ url: pontosUrl, format: geojsonFormat });
 
     // Estilo das áreas
@@ -195,26 +193,79 @@
     });
 
     // ------------------------------------------------------------
-    // Estilo dinâmico dos pontos por STATUS DA MEDIÇÃO (ajustado)
-    // Regras:
-    // - "Medição encerrada"  -> verde
-    // - "Medição não iniciada" -> laranja
-    // - "Falta medição noturna" -> azul (somente quando o texto contiver essa frase)
-    // - Outros / vazio -> cinza
+    // Helpers: normalizar texto e achar campo "status" mesmo com nome diferente
+    // ------------------------------------------------------------
+    function normalizeKey(s) {
+      // remove acento, espaços e pontuações comuns para comparar chaves
+      return String(s ?? "")
+        .toLowerCase()
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9]/g, ""); // tira tudo que não for letra/número
+    }
+
+    function normalizeValue(s) {
+      return String(s ?? "")
+        .trim()
+        .toLowerCase()
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    }
+
+    // tenta encontrar, entre as propriedades, uma chave que represente o status
+    function getStatusRaw(feature) {
+      const props = feature.getProperties();
+      const keys = Object.keys(props || {});
+
+      // candidatos normalizados (aceita variações: STATUS DA, STATUS DA MEDIÇÃO, STATUS_DA, etc.)
+      const candidates = new Set([
+        "statusdamedicao",
+        "statusdamedicao",
+        "statusda",
+        "status",
+        "statusdamedicao_", // só por segurança (não faz mal)
+      ]);
+
+      // 1) tenta bater por comparação normalizada
+      for (const k of keys) {
+        if (k === "geometry") continue;
+        const nk = normalizeKey(k);
+        if (candidates.has(nk)) return props[k];
+      }
+
+      // 2) fallback: procura qualquer chave que contenha "status"
+      for (const k of keys) {
+        if (k === "geometry") continue;
+        const nk = normalizeKey(k);
+        if (nk.includes("status")) return props[k];
+      }
+
+      return "";
+    }
+
+    // ------------------------------------------------------------
+    // Classificação do STATUS DA MEDIÇÃO (valores)
+    // ------------------------------------------------------------
+    function normalizeStatusValue(raw) {
+      const s = normalizeValue(raw);
+
+      if (!s) return "Não informado";
+      if (s.includes("encerrada")) return "Medição encerrada";
+      if (s.includes("nao iniciada") || s.includes("não iniciada")) return "Medição não iniciada";
+      if (s.includes("falta medicao noturna") || s.includes("falta medição noturna")) return "Falta medição noturna";
+
+      return "Não informado";
+    }
+
+    // ------------------------------------------------------------
+    // Estilo dinâmico dos pontos por STATUS (robusto)
     // ------------------------------------------------------------
     function estiloPontos(feature) {
-      const raw = feature.get("STATUS DA MEDIÇÃO") ?? feature.get("STATUS") ?? "";
-      const status = String(raw).toLowerCase().trim();
+      const raw = getStatusRaw(feature);
+      const statusNorm = normalizeStatusValue(raw);
 
       let cor = "rgba(120,120,120,0.85)"; // padrão (cinza)
-
-      if (status.includes("medição encerrada") || status.includes("encerrada")) {
-        cor = "rgba(0,150,0,0.85)"; // verde
-      } else if (status.includes("medição não iniciada") || status.includes("nao iniciada")) {
-        cor = "rgba(255,140,0,0.90)"; // laranja
-      } else if (status.includes("falta medição noturna")) {
-        cor = "rgba(0,90,200,0.90)"; // azul
-      }
+      if (statusNorm === "Medição encerrada") cor = "rgba(0,150,0,0.85)";
+      else if (statusNorm === "Medição não iniciada") cor = "rgba(255,140,0,0.90)";
+      else if (statusNorm === "Falta medição noturna") cor = "rgba(0,90,200,0.90)";
 
       return new ol.style.Style({
         image: new ol.style.Circle({
@@ -245,7 +296,7 @@
     // ------------------------------------------------------------
     function fitAll() {
       const extents = [];
-      if (areasSource.getFeatures().length) extents.push(areasSource.getExtent());
+      if (areasSource.getFeatures().length)  extents.push(areasSource.getExtent());
       if (pontosSource.getFeatures().length) extents.push(pontosSource.getExtent());
 
       if (!extents.length) {
@@ -271,19 +322,8 @@
     });
 
     // ------------------------------------------------------------
-    // Tabela de quantitativos por STATUS DA MEDIÇÃO (normalizada)
+    // Tabela de quantitativos por STATUS (robusto)
     // ------------------------------------------------------------
-    function normalizeStatus(raw) {
-      const s = String(raw ?? "").trim().toLowerCase();
-
-      if (!s) return "Não informado";
-      if (s.includes("medição encerrada") || s.includes("encerrada")) return "Medição encerrada";
-      if (s.includes("medição não iniciada") || s.includes("nao iniciada")) return "Medição não iniciada";
-      if (s.includes("falta medição noturna")) return "Falta medição noturna";
-
-      return "Não informado";
-    }
-
     function atualizarTabelaStatus() {
       const contagem = {
         "Medição encerrada": 0,
@@ -292,9 +332,12 @@
         "Não informado": 0
       };
 
-      pontosSource.getFeatures().forEach(f => {
-        const raw = f.get("STATUS DA MEDIÇÃO") ?? f.get("STATUS") ?? "";
-        const status = normalizeStatus(raw);
+      const feats = pontosSource.getFeatures();
+      console.log("DEBUG: exemplo de chaves do 1º ponto:", feats[0] ? Object.keys(feats[0].getProperties()) : "(sem pontos)");
+
+      feats.forEach(f => {
+        const raw = getStatusRaw(f);
+        const status = normalizeStatusValue(raw);
         contagem[status] = (contagem[status] || 0) + 1;
       });
 
