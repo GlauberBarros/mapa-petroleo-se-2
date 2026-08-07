@@ -25,20 +25,6 @@
     .panel .muted { opacity: .75; font-size: 12px; margin-top: 6px; }
     .panel button { margin-top: 10px; width: 100%; cursor: pointer; }
 
-    /* Tabela de status */
-    .tbl {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 6px;
-      font-size: 13px;
-    }
-    .tbl td {
-      padding: 4px 6px;
-      border-bottom: 1px solid rgba(0,0,0,.08);
-      vertical-align: top;
-    }
-    .tbl td:last-child { text-align: right; }
-
     /* Legenda */
     .legend {
       position: absolute;
@@ -99,14 +85,9 @@
 
     <label><input type="checkbox" id="chkAreas" checked> Áreas (CAMPOS-CARMO_ENERGY)</label>
     <label><input type="checkbox" id="chkEstacoes" checked> Áreas das estações</label>
-    <label><input type="checkbox" id="chkPontos" checked> Pontos (Status)</label>
+    <label><input type="checkbox" id="chkPontos" checked> Pontos de medição</label>
 
     <button id="btnRefit">Ajustar zoom</button>
-
-    <div style="margin-top:10px">
-      <b>Quantitativo por status</b>
-      <table class="tbl" id="tabelaStatus"></table>
-    </div>
 
     <div class="muted">
       Dica: se as camadas não aparecerem, abra F12 → Console e veja os logs.
@@ -115,26 +96,11 @@
 
   <!-- Legenda -->
   <div class="legend">
-    <b>Status da medição</b>
-
-    <div class="legend-item">
-      <div class="legend-color" style="background: rgba(0,150,0,0.85)"></div>
-      Medição encerrada
-    </div>
-
-    <div class="legend-item">
-      <div class="legend-color" style="background: rgba(255,140,0,0.90)"></div>
-      Medição não iniciada
-    </div>
+    <b>Camadas</b>
 
     <div class="legend-item">
       <div class="legend-color" style="background: rgba(0,90,200,0.90)"></div>
-      Falta medição noturna
-    </div>
-
-    <div class="legend-item">
-      <div class="legend-color" style="background: rgba(120,120,120,0.85)"></div>
-      Outro / não informado
+      Pontos de medição
     </div>
 
     <div class="legend-item" style="margin-top:8px">
@@ -151,6 +117,7 @@
   <!-- Popup -->
   <div id="popup" class="popup" style="display:none;"></div>
 
+  <script src="https://cdn.jsdelivr.net/npm/proj4@latest/dist/proj4.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/ol@latest/dist/ol.js"></script>
   <script>
     const statusEl = document.getElementById("status");
@@ -159,15 +126,23 @@
       console.log("[STATUS]", msg);
     }
 
-    if (!window.ol) {
-      setStatus("ERRO: OpenLayers não carregou (internet/bloqueio de CDN).");
-      throw new Error("OpenLayers não carregou");
+    if (!window.ol || !window.proj4) {
+      setStatus("ERRO: bibliotecas do mapa não carregaram (internet/bloqueio de CDN).");
+      throw new Error("OpenLayers/Proj4 não carregaram");
     }
+
+    // O novo pontos.geojson está em SIRGAS 2000 / UTM zona 24S (EPSG:31984).
+    // O Proj4 permite transformar esses pontos para a projeção do mapa (EPSG:3857).
+    proj4.defs(
+      "EPSG:31984",
+      "+proj=utm +zone=24 +south +ellps=GRS80 +units=m +no_defs"
+    );
+    ol.proj.proj4.register(proj4);
 
     // ------------------------------------------------------------
     // Cache-busting simples
     // ------------------------------------------------------------
-    const DATA_VERSION = 3;
+    const DATA_VERSION = 4;
 
     // URLs robustas para GitHub Pages
     const areasUrl  = new URL(`areas.geojson?v=${DATA_VERSION}`,  window.location.href).toString();
@@ -181,16 +156,22 @@
     // Base
     const osm = new ol.layer.Tile({ source: new ol.source.OSM() });
 
-    // Formato GeoJSON (dados em lon/lat -> mapa em webmercator)
-    const geojsonFormat = new ol.format.GeoJSON({
+    // Polígonos em longitude/latitude -> mapa em Web Mercator
+    const geojsonLonLatFormat = new ol.format.GeoJSON({
       dataProjection: "EPSG:4326",
       featureProjection: "EPSG:3857"
     });
 
+    // Pontos em SIRGAS 2000 / UTM 24S -> mapa em Web Mercator
+    const geojsonPontosFormat = new ol.format.GeoJSON({
+      dataProjection: "EPSG:31984",
+      featureProjection: "EPSG:3857"
+    });
+
     // Sources
-    const areasSource  = new ol.source.Vector({ url: areasUrl,  format: geojsonFormat });
-    const estacoesSource = new ol.source.Vector({ url: estacoesUrl, format: geojsonFormat });
-    const pontosSource = new ol.source.Vector({ url: pontosUrl, format: geojsonFormat });
+    const areasSource  = new ol.source.Vector({ url: areasUrl, format: geojsonLonLatFormat });
+    const estacoesSource = new ol.source.Vector({ url: estacoesUrl, format: geojsonLonLatFormat });
+    const pontosSource = new ol.source.Vector({ url: pontosUrl, format: geojsonPontosFormat });
 
     // Estilo das áreas
     const areasLayer = new ol.layer.Vector({
@@ -211,88 +192,16 @@
     });
 
     // ------------------------------------------------------------
-    // Helpers: normalizar texto e achar campo "status" mesmo com nome diferente
+    // Pontos sem classificação por status nesta versão.
+    // STATUS-D e STATUS-N permanecem disponíveis nos atributos para uso futuro.
     // ------------------------------------------------------------
-    function normalizeKey(s) {
-      // remove acento, espaços e pontuações comuns para comparar chaves
-      return String(s ?? "")
-        .toLowerCase()
-        .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-        .replace(/[^a-z0-9]/g, ""); // tira tudo que não for letra/número
-    }
-
-    function normalizeValue(s) {
-      return String(s ?? "")
-        .trim()
-        .toLowerCase()
-        .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    }
-
-    // tenta encontrar, entre as propriedades, uma chave que represente o status
-    function getStatusRaw(feature) {
-      const props = feature.getProperties();
-      const keys = Object.keys(props || {});
-
-      // candidatos normalizados (aceita variações: STATUS DA, STATUS DA MEDIÇÃO, STATUS_DA, etc.)
-      const candidates = new Set([
-        "statusdamedicao",
-        "statusdamedicao",
-        "statusda",
-        "status",
-        "statusdamedicao_", // só por segurança (não faz mal)
-      ]);
-
-      // 1) tenta bater por comparação normalizada
-      for (const k of keys) {
-        if (k === "geometry") continue;
-        const nk = normalizeKey(k);
-        if (candidates.has(nk)) return props[k];
-      }
-
-      // 2) fallback: procura qualquer chave que contenha "status"
-      for (const k of keys) {
-        if (k === "geometry") continue;
-        const nk = normalizeKey(k);
-        if (nk.includes("status")) return props[k];
-      }
-
-      return "";
-    }
-
-    // ------------------------------------------------------------
-    // Classificação do STATUS DA MEDIÇÃO (valores)
-    // ------------------------------------------------------------
-    function normalizeStatusValue(raw) {
-      const s = normalizeValue(raw);
-
-      if (!s) return "Não informado";
-      if (s.includes("encerrada")) return "Medição encerrada";
-      if (s.includes("nao iniciada") || s.includes("não iniciada")) return "Medição não iniciada";
-      if (s.includes("falta medicao noturna") || s.includes("falta medição noturna")) return "Falta medição noturna";
-
-      return "Não informado";
-    }
-
-    // ------------------------------------------------------------
-    // Estilo dinâmico dos pontos por STATUS (robusto)
-    // ------------------------------------------------------------
-    function estiloPontos(feature) {
-      const raw = getStatusRaw(feature);
-      const statusNorm = normalizeStatusValue(raw);
-
-      let cor = "rgba(120,120,120,0.85)"; // padrão (cinza)
-      if (statusNorm === "Medição encerrada") cor = "rgba(0,150,0,0.85)";
-      else if (statusNorm === "Medição não iniciada") cor = "rgba(255,140,0,0.90)";
-      else if (statusNorm === "Falta medição noturna") cor = "rgba(0,90,200,0.90)";
-
-      return new ol.style.Style({
-        image: new ol.style.Circle({
-          radius: 6,
-          fill: new ol.style.Fill({ color: cor }),
-          stroke: new ol.style.Stroke({ color: "#000", width: 1 })
-        })
-      });
-    }
+    const estiloPontos = new ol.style.Style({
+      image: new ol.style.Circle({
+        radius: 6,
+        fill: new ol.style.Fill({ color: "rgba(0,90,200,0.90)" }),
+        stroke: new ol.style.Stroke({ color: "#000", width: 1 })
+      })
+    });
 
     const pontosLayer = new ol.layer.Vector({
       source: pontosSource,
@@ -344,51 +253,6 @@
     });
 
     // ------------------------------------------------------------
-    // Tabela de quantitativos por STATUS (robusto)
-    // ------------------------------------------------------------
-    function atualizarTabelaStatus() {
-      const contagem = {
-        "Medição encerrada": 0,
-        "Medição não iniciada": 0,
-        "Falta medição noturna": 0,
-        "Não informado": 0
-      };
-
-      const feats = pontosSource.getFeatures();
-      console.log("DEBUG: exemplo de chaves do 1º ponto:", feats[0] ? Object.keys(feats[0].getProperties()) : "(sem pontos)");
-
-      feats.forEach(f => {
-        const raw = getStatusRaw(f);
-        const status = normalizeStatusValue(raw);
-        contagem[status] = (contagem[status] || 0) + 1;
-      });
-
-      const tabela = document.getElementById("tabelaStatus");
-      tabela.innerHTML = "";
-
-      const ordem = [
-        "Medição encerrada",
-        "Medição não iniciada",
-        "Falta medição noturna",
-        "Não informado"
-      ];
-
-      let total = 0;
-      for (const k of ordem) total += contagem[k] || 0;
-
-      for (const k of ordem) {
-        const qtd = contagem[k] || 0;
-        const tr = document.createElement("tr");
-        tr.innerHTML = `<td>${k}</td><td><b>${qtd}</b></td>`;
-        tabela.appendChild(tr);
-      }
-
-      const trTotal = document.createElement("tr");
-      trTotal.innerHTML = `<td><b>Total</b></td><td><b>${total}</b></td>`;
-      tabela.appendChild(trTotal);
-    }
-
-    // ------------------------------------------------------------
     // Popup (mantém comportamento de mostrar atributos)
     // ------------------------------------------------------------
     const popupEl = document.getElementById("popup");
@@ -430,7 +294,6 @@
       loaded += 1;
       if (loaded >= 3) {
         setStatus("Camadas carregadas.");
-        atualizarTabelaStatus();
         fitAll();
       }
     }
