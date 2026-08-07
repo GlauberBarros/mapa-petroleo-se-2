@@ -98,6 +98,7 @@
     <div>Status: <span id="status">Carregando…</span></div>
 
     <label><input type="checkbox" id="chkAreas" checked> Áreas (CAMPOS-CARMO_ENERGY)</label>
+    <label><input type="checkbox" id="chkEstacoes" checked> Áreas das estações</label>
     <label><input type="checkbox" id="chkPontos" checked> Pontos (Status)</label>
 
     <button id="btnRefit">Ajustar zoom</button>
@@ -140,6 +141,11 @@
       <div class="legend-line"></div>
       Limites das áreas
     </div>
+
+    <div class="legend-item">
+      <div class="legend-line" style="border-top-color:#8e44ad"></div>
+      Áreas das estações
+    </div>
   </div>
 
   <!-- Popup -->
@@ -161,13 +167,15 @@
     // ------------------------------------------------------------
     // Cache-busting simples
     // ------------------------------------------------------------
-    const DATA_VERSION = 2;
+    const DATA_VERSION = 3;
 
     // URLs robustas para GitHub Pages
     const areasUrl  = new URL(`areas.geojson?v=${DATA_VERSION}`,  window.location.href).toString();
+    const estacoesUrl = new URL(`ÁREA-ESTAÇÕES.geojson?v=${DATA_VERSION}`, window.location.href).toString();
     const pontosUrl = new URL(`pontos.geojson?v=${DATA_VERSION}`, window.location.href).toString();
 
     console.log("areasUrl =", areasUrl);
+    console.log("estacoesUrl =", estacoesUrl);
     console.log("pontosUrl =", pontosUrl);
 
     // Base
@@ -181,6 +189,7 @@
 
     // Sources
     const areasSource  = new ol.source.Vector({ url: areasUrl,  format: geojsonFormat });
+    const estacoesSource = new ol.source.Vector({ url: estacoesUrl, format: geojsonFormat });
     const pontosSource = new ol.source.Vector({ url: pontosUrl, format: geojsonFormat });
 
     // Estilo das áreas
@@ -189,6 +198,15 @@
       style: new ol.style.Style({
         stroke: new ol.style.Stroke({ color: "#000", width: 2 }),
         fill: new ol.style.Fill({ color: "rgba(0,0,0,0.12)" })
+      })
+    });
+
+    // Estilo das áreas das estações
+    const estacoesLayer = new ol.layer.Vector({
+      source: estacoesSource,
+      style: new ol.style.Style({
+        stroke: new ol.style.Stroke({ color: "#8e44ad", width: 2.5 }),
+        fill: new ol.style.Fill({ color: "rgba(142,68,173,0.16)" })
       })
     });
 
@@ -284,7 +302,7 @@
     // Mapa
     const map = new ol.Map({
       target: "map",
-      layers: [osm, areasLayer, pontosLayer],
+      layers: [osm, areasLayer, estacoesLayer, pontosLayer],
       view: new ol.View({
         center: ol.proj.fromLonLat([-37.3, -10.7]),
         zoom: 8
@@ -297,6 +315,7 @@
     function fitAll() {
       const extents = [];
       if (areasSource.getFeatures().length)  extents.push(areasSource.getExtent());
+      if (estacoesSource.getFeatures().length) extents.push(estacoesSource.getExtent());
       if (pontosSource.getFeatures().length) extents.push(pontosSource.getExtent());
 
       if (!extents.length) {
@@ -316,6 +335,9 @@
     // Toggle camadas
     document.getElementById("chkAreas").addEventListener("change", (e) => {
       areasLayer.setVisible(e.target.checked);
+    });
+    document.getElementById("chkEstacoes").addEventListener("change", (e) => {
+      estacoesLayer.setVisible(e.target.checked);
     });
     document.getElementById("chkPontos").addEventListener("change", (e) => {
       pontosLayer.setVisible(e.target.checked);
@@ -406,7 +428,7 @@
     let loaded = 0;
     function onLoaded() {
       loaded += 1;
-      if (loaded >= 2) {
+      if (loaded >= 3) {
         setStatus("Camadas carregadas.");
         atualizarTabelaStatus();
         fitAll();
@@ -422,6 +444,15 @@
     areasSource.on("featuresloaderror", () => {
       console.error("Erro carregando áreas:", areasUrl);
       setStatus("ERRO ao carregar áreas (veja Console/Network).");
+    });
+
+    estacoesSource.on("featuresloadend", () => {
+      console.log("Áreas das estações carregadas:", estacoesSource.getFeatures().length);
+      onLoaded();
+    });
+    estacoesSource.on("featuresloaderror", () => {
+      console.error("Erro carregando áreas das estações:", estacoesUrl);
+      setStatus("ERRO ao carregar áreas das estações (veja Console/Network).");
     });
 
     pontosSource.on("featuresloadend", () => {
