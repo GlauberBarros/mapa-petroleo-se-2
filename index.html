@@ -98,9 +98,26 @@
   <div class="legend">
     <b>Camadas</b>
 
+    <div style="margin-top:6px"><b>Status das medições</b></div>
+
     <div class="legend-item">
-      <div class="legend-color" style="background: rgba(0,90,200,0.90)"></div>
-      Pontos de medição
+      <div class="legend-color" style="background:#2e7d32"></div>
+      Diurno realizado e Noturno realizado
+    </div>
+
+    <div class="legend-item">
+      <div class="legend-color" style="background:#f9a825"></div>
+      Diurno realizado e Noturno pendente
+    </div>
+
+    <div class="legend-item">
+      <div class="legend-color" style="background:#c62828"></div>
+      Diurno pendente e Noturno pendente
+    </div>
+
+    <div class="legend-item">
+      <div class="legend-color" style="background:#1565c0"></div>
+      Diurno pendente e Noturno realizado
     </div>
 
     <div class="legend-item" style="margin-top:8px">
@@ -142,7 +159,7 @@
     // ------------------------------------------------------------
     // Cache-busting simples
     // ------------------------------------------------------------
-    const DATA_VERSION = 4;
+    const DATA_VERSION = 5;
 
     // URLs robustas para GitHub Pages
     const areasUrl  = new URL(`areas.geojson?v=${DATA_VERSION}`,  window.location.href).toString();
@@ -192,20 +209,50 @@
     });
 
     // ------------------------------------------------------------
-    // Pontos sem classificação por status nesta versão.
-    // STATUS-D e STATUS-N permanecem disponíveis nos atributos para uso futuro.
+    // Classificação dos pontos pelas quatro combinações de Status - D e Status - N.
+    // Valores vazios ou diferentes de "Realizado" são tratados como pendentes.
     // ------------------------------------------------------------
-    const estiloPontos = new ol.style.Style({
-      image: new ol.style.Circle({
-        radius: 6,
-        fill: new ol.style.Fill({ color: "rgba(0,90,200,0.90)" }),
-        stroke: new ol.style.Stroke({ color: "#000", width: 1 })
-      })
-    });
+    const coresStatus = {
+      realizado_realizado: "#2e7d32",
+      realizado_pendente: "#f9a825",
+      pendente_pendente: "#c62828",
+      pendente_realizado: "#1565c0"
+    };
+
+    function statusRealizado(valor) {
+      return String(valor ?? "")
+        .trim()
+        .toLocaleLowerCase("pt-BR")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "") === "realizado";
+    }
+
+    function classeStatus(feature) {
+      const diurnoRealizado = statusRealizado(feature.get("Status - D"));
+      const noturnoRealizado = statusRealizado(feature.get("Status - N"));
+
+      if (diurnoRealizado && noturnoRealizado) return "realizado_realizado";
+      if (diurnoRealizado && !noturnoRealizado) return "realizado_pendente";
+      if (!diurnoRealizado && !noturnoRealizado) return "pendente_pendente";
+      return "pendente_realizado";
+    }
+
+    const estilosPontos = Object.fromEntries(
+      Object.entries(coresStatus).map(([classe, cor]) => [
+        classe,
+        new ol.style.Style({
+          image: new ol.style.Circle({
+            radius: 6,
+            fill: new ol.style.Fill({ color: cor }),
+            stroke: new ol.style.Stroke({ color: "#000", width: 1 })
+          })
+        })
+      ])
+    );
 
     const pontosLayer = new ol.layer.Vector({
       source: pontosSource,
-      style: estiloPontos
+      style: (feature) => estilosPontos[classeStatus(feature)]
     });
 
     // Mapa
@@ -329,4 +376,5 @@
   </script>
 </body>
 </html>
+
 
