@@ -24,6 +24,7 @@
     .panel label { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
     .panel .muted { opacity: .75; font-size: 12px; margin-top: 6px; }
     .panel button { margin-top: 10px; width: 100%; cursor: pointer; }
+    .panel select { margin-top: 8px; width: 100%; padding: 6px; border-radius: 6px; border: 1px solid #ccc; }
 
     /* Legenda */
     .legend {
@@ -86,6 +87,11 @@
     <label><input type="checkbox" id="chkAreas" checked> Áreas (CAMPOS-CARMO_ENERGY)</label>
     <label><input type="checkbox" id="chkEstacoes" checked> Áreas das estações</label>
     <label><input type="checkbox" id="chkPontos" checked> Pontos de medição</label>
+
+    <select id="baseMapSelector">
+      <option value="osm">Open Street Maps</option>
+      <option value="satellite">Google Satellite</option>
+    </select>
 
     <button id="btnRefit">Ajustar zoom</button>
 
@@ -170,8 +176,19 @@
     console.log("estacoesUrl =", estacoesUrl);
     console.log("pontosUrl =", pontosUrl);
 
-    // Base
-    const osm = new ol.layer.Tile({ source: new ol.source.OSM() });
+    // Base layers
+    const osmLayer = new ol.layer.Tile({
+      source: new ol.source.OSM(),
+      visible: true
+    });
+
+    const satelliteLayer = new ol.layer.Tile({
+      source: new ol.source.XYZ({
+        url: 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+        attributions: '© Google'
+      }),
+      visible: false
+    });
 
     // Polígonos em longitude/latitude -> mapa em Web Mercator
     const geojsonLonLatFormat = new ol.format.GeoJSON({
@@ -245,24 +262,59 @@
             radius: 6,
             fill: new ol.style.Fill({ color: cor }),
             stroke: new ol.style.Stroke({ color: "#000", width: 1 })
+          }),
+          text: new ol.style.Text({
+            text: '',
+            font: '12px system-ui, -apple-system, Segoe UI, Roboto, Arial',
+            fill: new ol.style.Fill({ color: '#000' }),
+            stroke: new ol.style.Stroke({ color: '#fff', width: 3 }),
+            offsetY: -12,
+            textAlign: 'center',
+            textBaseline: 'middle'
           })
         })
       ])
     );
 
+    // Adicionar função para atualizar o texto do rótulo baseado na feature
+    function updateLabelStyle(feature) {
+      const classe = classeStatus(feature);
+      const style = estilosPontos[classe];
+      const itemValue = feature.get('ITEM') || '';
+      
+      if (style) {
+        style.getText().setText(itemValue);
+      }
+      return style;
+    }
+
     const pontosLayer = new ol.layer.Vector({
       source: pontosSource,
-      style: (feature) => estilosPontos[classeStatus(feature)]
+      style: (feature) => updateLabelStyle(feature)
     });
 
     // Mapa
     const map = new ol.Map({
       target: "map",
-      layers: [osm, areasLayer, estacoesLayer, pontosLayer],
+      layers: [osmLayer, satelliteLayer, areasLayer, estacoesLayer, pontosLayer],
       view: new ol.View({
         center: ol.proj.fromLonLat([-37.3, -10.7]),
         zoom: 8
       })
+    });
+
+    // Alternar entre OSM e Google Satellite
+    const baseMapSelector = document.getElementById('baseMapSelector');
+    baseMapSelector.addEventListener('change', (e) => {
+      const selectedMap = e.target.value;
+      
+      if (selectedMap === 'osm') {
+        osmLayer.setVisible(true);
+        satelliteLayer.setVisible(false);
+      } else if (selectedMap === 'satellite') {
+        osmLayer.setVisible(false);
+        satelliteLayer.setVisible(true);
+      }
     });
 
     // ------------------------------------------------------------
@@ -376,5 +428,3 @@
   </script>
 </body>
 </html>
-
-
